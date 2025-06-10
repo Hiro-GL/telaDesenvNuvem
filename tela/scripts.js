@@ -1,19 +1,46 @@
-// Array para armazenar todos os cards (iniciais e criados pelo usuário)
-let cardsData = [
-    {
-        title: "Exemplo de Disciplina",
-        text_pri: "Exemplo de introdução",
-        cont:"Conteúdo:",
-        lista: [`<li><input type="checkbox" class="task-checkbox">Exemplo 1</li>
-        <li><input type="checkbox" class="task-checkbox">Exemplo 2</li>
-        <li><input type="checkbox" class="task-checkbox">Exemplo 3</li>
-        <li><input type="checkbox" class="task-checkbox">Exemplo 4</li>`],
-        img:"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRwe-C9ewmVcUxWGllRBAU_gxrLgSD1QE6baA&s",
-    },
-];
+// Remova o array cardsData inicial, ele será carregado do Back4App
+let cardsData = []; // Será preenchido pelo Back4App
 
 // Variáveis de controle
 let modoEdicao = false, cardEditandoIndex = -1;
+
+// --- Configuração e Mapeamento Back4App ---
+
+// Mapeamento de objetos Parse para o formato local
+function mapParseObjectToLocal(parseObject) {
+    // Certifique-se de que os campos do Parse correspondem aos seus campos locais
+    const avaliacoes = parseObject.get('avaliacoes') || [];
+    const listaRaw = parseObject.get('lista') || ''; // A lista agora é salva como uma string HTML no Parse
+    
+    return {
+        objectId: parseObject.id, // O ID único do objeto no Back4App
+        title: parseObject.get('title'),
+        text_pri: parseObject.get('text_pri'),
+        cont: parseObject.get('cont') || "Conteúdo detalhado:", // Valor padrão se não existir no Parse
+        lista: [listaRaw], // Adapta de volta para o formato de array esperado
+        img: parseObject.get('img'),
+        avaliacoes: avaliacoes
+    };
+}
+
+
+// Mapeamento de objeto local para o formato Parse
+function mapLocalObjectToParse(localObject, parseObject) {
+    parseObject.set('title', localObject.title);
+    parseObject.set('text_pri', localObject.text_pri);
+    parseObject.set('cont', localObject.cont);
+    
+    // Salva 'lista' como a string HTML completa no Parse
+    parseObject.set('lista', localObject.lista[0]); 
+    parseObject.set('img', localObject.img);
+    parseObject.set('avaliacoes', localObject.avaliacoes);
+    return parseObject;
+}
+
+// Classe Parse para os cards
+const DisciplinaCard = Parse.Object.extend("DisciplinaCard");
+
+// --- Funções de Lógica da Aplicação ---
 
 // Função para calcular dias restantes até a avaliação
 function calcularDiasRestantes(dataAvaliacao) {
@@ -148,7 +175,7 @@ function expandirCard(card) {
         const btnFechar = cardExpandido.querySelector('.btn-fechar-card');
         if (btnFechar) btnFechar.remove();
     }
-  
+    
     // Expandir o card atual
     if (!card.classList.contains('expanded')) {
         card.classList.add('expanded');
@@ -168,7 +195,7 @@ function expandirCard(card) {
         }
     }
 }
-  
+    
 // Função para fechar o card expandido
 function fecharCard(card) {
     card = card || document.querySelector('.card.expanded');
@@ -233,18 +260,37 @@ function removerCampoAvaliacao(botao) {
     campo.remove();
 }
 
-// Função para excluir um card
-function excluirCard(index) {
+// Função para excluir um card (MODIFICADA PARA BACK4APP)
+async function excluirCard(index) {
     event.stopPropagation();
-    if (confirm('Tem certeza que deseja excluir esta disciplina?')) {
-        cardsData.splice(index, 1);
+    if (!confirm('Tem certeza que deseja excluir esta disciplina?')) {
+        return; // Sai da função se o usuário cancelar
+    }
+
+    const cardToDelete = cardsData[index];
+    if (!cardToDelete || !cardToDelete.objectId) {
+        alert('Erro: ID do card não encontrado para exclusão.');
+        console.error('Card sem objectId para exclusão:', cardToDelete);
+        return;
+    }
+
+    try {
+        const query = new Parse.Query(DisciplinaCard);
+        const parseObject = await query.get(cardToDelete.objectId);
+        await parseObject.destroy();
+        
+        cardsData.splice(index, 1); // Remove do array local
         atualizarCards();
         verificarAvaliacoes();
+        alert('Disciplina excluída com sucesso!');
+    } catch (error) {
+        console.error('Erro ao excluir card no Back4App:', error);
+        alert('Erro ao excluir disciplina. Verifique o console para mais detalhes.');
     }
 }
 
-// Função para criar/editar um card
-function criarNovoCard(event) {
+// Função para criar/editar um card (MODIFICADA PARA BACK4APP)
+async function criarNovoCard(event) {
     event.preventDefault();
     
     // Obter valores do formulário
@@ -256,8 +302,8 @@ function criarNovoCard(event) {
     // Coletar todas as avaliações do formulário e validar campos Data e Tipo condicionalmente
     const avaliacoesItems = document.querySelectorAll(".avaliacao-item");
     let avaliacoes = [];
-    let validacaoFalhou = false; // Flag para validação
-    let mensagemErro = ""; // Mensagem de erro específica
+    let validacaoFalhou = false;
+    let mensagemErro = "";
 
     avaliacoesItems.forEach(item => {
         const dataInput = item.querySelector(".avaliacao-data");
@@ -266,7 +312,7 @@ function criarNovoCard(event) {
 
         const data = dataInput.value;
         const tipo = tipoInput.value.trim();
-        const descricao = descricaoInput.value.trim(); // Trim para checagem, mas salva o original
+        const descricao = descricaoInput.value.trim();
 
         // Resetar bordas caso tenham sido marcadas como erro anteriormente
         dataInput.style.border = "";
@@ -281,7 +327,6 @@ function criarNovoCard(event) {
                 // Destaca os campos que falharam na validação
                 if (!data) dataInput.style.border = "1px solid red";
                 if (!tipo) tipoInput.style.border = "1px solid red";
-                // Não interrompe o loop para que outros erros possam ser destacados, se necessário
             } else {
                 // Se passou na validação, adiciona a avaliação
                 avaliacoes.push({
@@ -290,17 +335,16 @@ function criarNovoCard(event) {
                     descricao: descricaoInput.value // Salva o valor original da descrição
                 });
             }
-        } 
+        }
         // Se nenhum campo (data, tipo, descricao) foi preenchido, simplesmente ignora esta linha de avaliação.
     });
 
-    // Verificar se a validação falhou em algum item
     if (validacaoFalhou) {
         alert(mensagemErro);
         return; // Interrompe a criação/atualização do card
     }
     
-    // Converter o conteúdo em formato de lista com checkboxes
+    // Converter o conteúdo em formato de lista com checkboxes (salvar como string HTML)
     let listaItens = '';
     if (conteudo) {
         const linhas = conteudo.split('\n');
@@ -313,39 +357,64 @@ function criarNovoCard(event) {
         listaItens = '<li><input type="checkbox" class="task-checkbox"> Sem conteúdo detalhado</li>';
     }
     
-    // Criar objeto do novo card
-    const novoCard = {
+    // Criar objeto do novo card no formato local
+    const novoCardLocal = {
         title: titulo,
         text_pri: descricao,
         cont: "Conteúdo detalhado:",
-        lista: [`${listaItens}`],
+        lista: [listaItens], // Aqui ainda é um array com a string HTML
         img: imagem,
         avaliacoes: avaliacoes
     };
     
-    if (modoEdicao && cardEditandoIndex >= 0) {
-        // Atualizar card existente
-        cardsData[cardEditandoIndex] = novoCard;
+    try {
+        let parseObject;
+        if (modoEdicao && cardEditandoIndex >= 0) {
+            // EDITAR card existente
+            const cardAtual = cardsData[cardEditandoIndex];
+            if (!cardAtual || !cardAtual.objectId) {
+                alert('Erro: ID do card não encontrado para edição.');
+                console.error('Card sem objectId para edição:', cardAtual);
+                return;
+            }
+            const query = new Parse.Query(DisciplinaCard);
+            parseObject = await query.get(cardAtual.objectId);
+            
+            mapLocalObjectToParse(novoCardLocal, parseObject); // Atualiza o objeto Parse
+            await parseObject.save();
+            
+            cardsData[cardEditandoIndex] = { ...novoCardLocal, objectId: parseObject.id }; // Atualiza o array local
+            alert('Disciplina atualizada com sucesso!');
+        } else {
+            // ADICIONAR novo card
+            parseObject = new DisciplinaCard();
+            mapLocalObjectToParse(novoCardLocal, parseObject); // Popula o objeto Parse
+            await parseObject.save();
+            
+            cardsData.push({ ...novoCardLocal, objectId: parseObject.id }); // Adiciona ao array local
+            alert('Disciplina adicionada com sucesso!');
+        }
+        
+        // Resetar o formulário e o estado de edição
         modoEdicao = false;
         cardEditandoIndex = -1;
         document.getElementById('tituloFormulario').textContent = 'Criar Nova Disciplina';
         document.querySelector('#formNovoCard button[type="submit"]').textContent = 'Adicionar Disciplina';
-        alert('Disciplina atualizada com sucesso!');
-    } else {
-        // Adicionar novo card
-        cardsData.push(novoCard);
-        alert('Disciplina adicionada com sucesso!');
+        
+        document.getElementById('formNovoCard').reset();
+        atualizarCards();
+        verificarAvaliacoes();
+        ocultarFormulario();
+
+    } catch (error) {
+        console.error('Erro ao salvar card no Back4App:', error);
+        alert('Erro ao salvar disciplina. Verifique o console para mais detalhes.');
     }
-    
-    document.getElementById('formNovoCard').reset();
-    atualizarCards();
-    verificarAvaliacoes();
-    ocultarFormulario();
 }
 
 // Função para iniciar a edição de um card
 function editarCard(index) {
-    event.stopPropagation();
+    event.stopPropagation(); // Evita que o card se expanda/feche ao clicar nos botões de ação
 
     const cardData = cardsData[index];
     document.getElementById('titulo').value = cardData.title;
@@ -367,16 +436,24 @@ function editarCard(index) {
 
     // Carregar conteúdo das tarefas, removendo checkbox do HTML para texto simples
     const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = cardData.lista[0];
+    // cardData.lista é um array de strings HTML. Pegamos a primeira string.
+    tempDiv.innerHTML = cardData.lista[0] || ''; 
     const liItems = tempDiv.querySelectorAll('li');
     let conteudo = '';
     liItems.forEach(li => {
-        const texto = li.textContent.trim();
-        if (texto !== 'Sem conteúdo detalhado') {
+        // Remove a parte do checkbox e trim para obter o texto limpo
+        const input = li.querySelector('.task-checkbox');
+        let texto = li.textContent.trim();
+        if (input) {
+            texto = texto.substring(input.outerHTML.length).trim(); // Remove o HTML do input do texto
+        }
+        
+        if (texto && texto !== 'Sem conteúdo detalhado') {
             conteudo += texto + '\n';
         }
     });
-    document.getElementById('conteudo').value = conteudo;
+    document.getElementById('conteudo').value = conteudo.trim(); // Trim final para remover newline extra
+
 
     modoEdicao = true;
     cardEditandoIndex = index;
@@ -474,7 +551,7 @@ function renderizarCard(cardData, index) {
                             classeBadge = 'bg-danger';
                         } else if (diasRestantes <= 7) {
                             classeBadge = 'bg-warning';
-                        } else if (diasRestantes < 0) {
+                        } else if (diasRestantes < 0) { // Avaliação que já passou
                             classeBadge = 'bg-secondary';
                         }
                         
@@ -517,15 +594,32 @@ function toggleTaskCompletion(checkbox) {
     } else {
         li.classList.remove('completed');
     }
+    // IMPORTANTE: Para persistir o estado do checkbox, você precisaria:
+    // 1. Encontrar o card correspondente no `cardsData` (talvez passando o objectId do card).
+    // 2. Atualizar a string HTML em `card.lista[0]` para refletir o estado do checkbox (ex: `<input type="checkbox" checked>`).
+    // 3. Chamar a função para salvar o card atualizado no Back4App (usando o objectId).
+    // Esta parte não foi implementada para simplificar, mas é uma melhoria a ser considerada.
 }
 
-// Inicializar a página
+// Função para carregar cards do Back4App (NOVA FUNÇÃO PRINCIPAL DE INICIALIZAÇÃO)
+async function carregarCardsDoBack4App() {
+    const query = new Parse.Query(DisciplinaCard);
+    try {
+        const results = await query.find();
+        cardsData = results.map(mapParseObjectToLocal);
+        atualizarCards();
+        verificarAvaliacoes();
+    } catch (error) {
+        console.error('Erro ao carregar cards do Back4App:', error);
+        alert('Erro ao carregar disciplinas. Por favor, recarregue a página e verifique sua conexão.');
+    }
+}
+
+
+// --- Inicialização da Aplicação ---
 document.addEventListener('DOMContentLoaded', function() {
-    // Montar os cards iniciais
-    atualizarCards();
-    
-    // Verificar avaliações próximas
-    verificarAvaliacoes();
+    // Carregar os cards do Back4App primeiro
+    carregarCardsDoBack4App();
     
     // Adicionar evento de submit ao formulário
     document.getElementById('formNovoCard').addEventListener('submit', criarNovoCard);
@@ -541,12 +635,10 @@ document.addEventListener('DOMContentLoaded', function() {
         adicionarCampoAvaliacao();
     });
     
-    // Adicionar evento para os checkboxes
+    // Adicionar evento para os checkboxes (para que funcione mesmo após a renderização dinâmica)
     document.addEventListener('click', function(event) {
         if (event.target.classList.contains('task-checkbox')) {
-            // Evitar propagação para não expandir o card
-            event.stopPropagation();
-            // Alternar estado de conclusão
+            event.stopPropagation(); // Evita que o clique no checkbox expanda/feche o card
             toggleTaskCompletion(event.target);
         }
     });
